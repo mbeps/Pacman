@@ -102,3 +102,36 @@ class HungryAgent(Agent):
     
     def manhattan_distance(self, pos1, pos2):
         return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
+
+
+class SurvivalAgent(Agent):
+    def getAction(self, state):
+        # Get the current position of Pacman
+        pacman_pos = state.getPacmanPosition()
+        
+        # Get the positions of the ghosts
+        ghost_states = state.getGhostStates()
+        ghost_positions = [ghost.getPosition() for ghost in ghost_states]
+        
+        # Get legal actions
+        legal_actions = state.getLegalPacmanActions()
+        
+        # Calculate the safety score for each action
+        action_scores = {}
+        for action in legal_actions:
+            next_state = state.generatePacmanSuccessor(action)
+            next_pos = next_state.getPacmanPosition()
+            
+            # Calculate the minimum distance to any ghost
+            min_ghost_distance = min(self.manhattan_distance(next_pos, ghost_pos) for ghost_pos in ghost_positions)
+            
+            # The score is the distance to the nearest ghost (higher is better)
+            action_scores[action] = min_ghost_distance
+        
+        # Choose the action with the highest safety score
+        best_action = max(action_scores, key=action_scores.get)
+        
+        return best_action
+    
+    def manhattan_distance(self, pos1, pos2):
+        return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
