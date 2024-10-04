@@ -71,3 +71,34 @@ class GoWestAgent(Agent):
         
         # If no other direction is possible, stop
         return Directions.STOP
+
+
+class HungryAgent(Agent):
+    def getAction(self, state):
+        # Get the current position of Pacman
+        pacman_pos = state.getPacmanPosition()
+        
+        # Get the food grid
+        food_grid = state.getFood()
+        
+        # Find all food positions
+        food_positions = food_grid.asList()
+        
+        # If there's no food left, just stop
+        if not food_positions:
+            return Directions.STOP
+        
+        # Find the nearest food
+        nearest_food = min(food_positions, key=lambda food: self.manhattan_distance(pacman_pos, food))
+        
+        # Get legal actions
+        legal_actions = state.getLegalPacmanActions()
+        
+        # Choose the action that gets us closest to the nearest food
+        best_action = min(legal_actions, key=lambda action: 
+                          self.manhattan_distance(state.generatePacmanSuccessor(action).getPacmanPosition(), nearest_food))
+        
+        return best_action
+    
+    def manhattan_distance(self, pos1, pos2):
+        return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
