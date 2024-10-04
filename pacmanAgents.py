@@ -50,3 +50,24 @@ class GreedyAgent(Agent):
 
 def scoreEvaluation(state):
     return state.getScore()
+
+
+class GoWestAgent(Agent):
+    def getAction(self, state):
+        legal = state.getLegalPacmanActions()
+        
+        # Always try to go WEST if it's a legal move
+        if Directions.WEST in legal:
+            return Directions.WEST
+        
+        # If WEST is not possible, choose another direction
+        # Here, we prioritize NORTH, then SOUTH, then EAST
+        if Directions.NORTH in legal:
+            return Directions.NORTH
+        elif Directions.SOUTH in legal:
+            return Directions.SOUTH
+        elif Directions.EAST in legal:
+            return Directions.EAST
+        
+        # If no other direction is possible, stop
+        return Directions.STOP
