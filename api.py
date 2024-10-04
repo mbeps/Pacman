@@ -1,7 +1,10 @@
 # api.py
-# parsons/07-oct-2017
+# parsons/08-oct-2017
 #
-# Version 1.1
+# Version 2.1
+#
+# With acknowledgements to Jiaming Ke, who was the first to report the
+# bug in corners.
 #
 # An API for use with the PacMan AI projects from:
 #
@@ -27,10 +30,28 @@
 # The code here was written by Simon Parsons, based on examples from
 # the PacMan AI projects.
 
-# Sensing
+import util
 
+distanceLimit = 5
+
+def distanceLimited(objects, state):
+    # When passed a list of objects, tests how far they are from
+    # Pacman, and only returns the ones that are within the distance
+    # limit.
+
+    pacman = state.getPacmanPosition()
+    nearObjects = []
+    
+    for i in range(len(objects)):
+        if util.manhattanDistance(pacman,objects[i]) <= distanceLimit:
+            nearObjects.append(objects[i])
+
+    return nearObjects
+#
+# Sensing
+#
 def whereAmI(state):
-    # Retunrs an (x, y) pair of Pacman's position.
+    # Returns an (x, y) pair of Pacman's position.
     #
     # This version says exactly where Pacman is.
     # In later version this may be obfusticated.
@@ -51,24 +72,22 @@ def ghosts(state):
     # This version just returns the ghost positions from the state data
     # In later versions this will be more restricted, and include some
     # uncertainty.
-
-    return state.getGhostPositions()
+            
+    return distanceLimited(state.getGhostPositions(),state)
 
 def capsules(state):
     # Returns a list of (x, y) pairs of capsule positions.
     #
-    # This version just returns the capsule positions from the state data
-    # In later versions this will be more restricted, and include some
-    # uncertainty.
+    # This version returns the capsule positions if they are within
+    # the distance limit.
 
-    return state.getCapsules()
+    return distanceLimited(state.getCapsules(), state)
 
 def food(state):
     # Returns a list of (x, y) pairs of food positions
     #
-    # This version just returns all the current food locations
-    # extracted from the state data.  In later versions, this will be
-    # restricted by distance, and include some uncertainty.
+    # This version returns all the current food locations that are
+    # within the distance limit.
     
     foodList= []
     foodGrid = state.getFood()
@@ -78,7 +97,7 @@ def food(state):
         for j in range(height):
             if foodGrid[i][j] == True:
                 foodList.append((i, j))            
-    return foodList
+    return distanceLimited(foodList, state)
 
 def walls(state):
     # Returns a list of (x, y) pairs of wall positions
@@ -97,10 +116,27 @@ def walls(state):
                 wallList.append((i, j))            
     return wallList
 
-# Acting
+def corners(state):
+    # Returns the coordinates of the four corners of the state space.
+    #
+    # For harder exploration we could obfusticate this information.
 
+    corners=[]
+    wallGrid = state.getWalls()
+    width = wallGrid.width
+    height = wallGrid.height
+    corners.append((0, 0))
+    corners.append((width-1, 0))
+    corners.append((0, height-1))
+    corners.append((width-1, height-1))
+    return corners
+                
+#
+# Acting
+#
 def makeMove(direction, legal):
     # This version is simple, just return the direction that was picked.
     # In later versions, this will be more complex
     
     return direction
+
