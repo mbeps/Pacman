@@ -17,36 +17,67 @@ from game import Agent
 import random
 import game
 import util
+import api
 
-class LeftTurnAgent(game.Agent):
-    "An agent that turns left at every opportunity"
-
-    def getAction(self, state):
-        legal = state.getLegalPacmanActions()
-        current = state.getPacmanState().configuration.direction
-        if current == Directions.STOP: current = Directions.NORTH
-        left = Directions.LEFT[current]
-        if left in legal: return left
-        if current in legal: return current
-        if Directions.RIGHT[current] in legal: return Directions.RIGHT[current]
-        if Directions.LEFT[left] in legal: return Directions.LEFT[left]
-        return Directions.STOP
-
-class GreedyAgent(Agent):
+class ImprovedGreedyAgent(Agent):
     def __init__(self, evalFn="scoreEvaluation"):
         self.evaluationFunction = util.lookup(evalFn, globals())
         assert self.evaluationFunction != None
+        self.lastMove = Directions.STOP
 
     def getAction(self, state):
-        # Generate candidate actions
-        legal = state.getLegalPacmanActions()
-        if Directions.STOP in legal: legal.remove(Directions.STOP)
+        legal = api.legalActions(state)
+        if Directions.STOP in legal:
+            legal.remove(Directions.STOP)
 
-        successors = [(state.generateSuccessor(0, action), action) for action in legal]
-        scored = [(self.evaluationFunction(state), action) for state, action in successors]
+        pacman_pos = api.whereAmI(state)
+        ghost_positions = api.ghosts(state)
+
+        # Calculate scores for each action
+        scored = []
+        for action in legal:
+            next_pos = self.getNextPosition(pacman_pos, action)
+            score = self.evaluationFunction(state)
+            
+            # Penalize moves that bring Pacman closer to ghosts
+            for ghost_pos in ghost_positions:
+                distance = util.manhattanDistance(next_pos, ghost_pos)
+                if distance <= 2:
+                    score -= 500 / (distance + 1)  # Higher penalty for closer ghosts
+            
+            # Reward moves towards food
+            food_list = api.food(state)
+            if food_list:
+                closest_food = min(food_list, key=lambda food: util.manhattanDistance(next_pos, food))
+                score += 10 / (util.manhattanDistance(next_pos, closest_food) + 1)
+
+            scored.append((score, action))
+
         bestScore = max(scored)[0]
         bestActions = [pair[1] for pair in scored if pair[0] == bestScore]
-        return random.choice(bestActions)
+        
+        # Consider the non-deterministic nature of actions
+        if random.random() < 0.8:  # 80% chance of choosing the best action
+            chosenAction = random.choice(bestActions)
+        else:  # 20% chance of choosing a random legal action
+            chosenAction = random.choice(legal)
+
+        return api.makeMove(chosenAction, legal)
+
+    def getNextPosition(self, pos, action):
+        x, y = pos
+        if action == Directions.NORTH:
+            return (x, y + 1)
+        elif action == Directions.SOUTH:
+            return (x, y - 1)
+        elif action == Directions.EAST:
+            return (x + 1, y)
+        elif action == Directions.WEST:
+            return (x - 1, y)
+        else:
+            return pos
+
+
 
 def scoreEvaluation(state):
     return state.getScore()
