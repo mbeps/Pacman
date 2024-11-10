@@ -1,119 +1,249 @@
-# pacmanAgents.py
-# ---------------
-# Licensing Information:  You are free to use or extend these projects for
-# educational purposes provided that (1) you do not distribute or publish
-# solutions, (2) you retain this notice, and (3) you provide clear
-# attribution to UC Berkeley, including a link to http://ai.berkeley.edu.
-# 
-# Attribution Information: The Pacman AI projects were developed at UC Berkeley.
-# The core projects and autograders were primarily created by John DeNero
-# (denero@cs.berkeley.edu) and Dan Klein (klein@cs.berkeley.edu).
-# Student side autograding was added by Brad Miller, Nick Hay, and
-# Pieter Abbeel (pabbeel@cs.berkeley.edu).
-
+# mdpAgents.py
+# parsons/20-nov-2017
+#
+# Version 1.0
+#
+# A simple MDP-based agent that uses value iteration.
+#
+# Extends the basic Agent class from game.py
 
 from pacman import Directions
 from game import Agent
+import api
 import random
 import game
 import util
-import api
-from game import Actions
+from copy import deepcopy
 
-
-class LeftTurnAgent(game.Agent):
-    "An agent that turns left at every opportunity"
-
-    def getAction(self, state):
-        legal = state.getLegalPacmanActions()
-        current = state.getPacmanState().configuration.direction
-        if current == Directions.STOP: current = Directions.NORTH
-        left = Directions.LEFT[current]
-        if left in legal: return left
-        if current in legal: return current
-        if Directions.RIGHT[current] in legal: return Directions.RIGHT[current]
-        if Directions.LEFT[left] in legal: return Directions.LEFT[left]
-        return Directions.STOP
-
-class GreedyAgent(Agent):
-    def __init__(self, evalFn="scoreEvaluation"):
-        self.evaluationFunction = util.lookup(evalFn, globals())
-        assert self.evaluationFunction != None
-
-    def getAction(self, state):
-        # Generate candidate actions
-        legal = state.getLegalPacmanActions()
-        if Directions.STOP in legal: legal.remove(Directions.STOP)
-
-        successors = [(state.generateSuccessor(0, action), action) for action in legal]
-        scored = [(self.evaluationFunction(state), action) for state, action in successors]
-        bestScore = max(scored)[0]
-        bestActions = [pair[1] for pair in scored if pair[0] == bestScore]
-        return random.choice(bestActions)
-
-
-class MyGreedyAgent(Agent):
+class SimpleMDPAgent(Agent):
+    """
+    An agent that uses value iteration to compute optimal actions
+    """
     def __init__(self):
-        self.map = {}
-        self.food_value = 10  # Value for spaces with food
+        self.grid = None
+        self.utilities = None
+        self.rewards = None
+        self.width = None 
+        self.height = None
+        self.discount = 0.9  # Increased discount to make agent more forward-looking
+        self.living_reward = -0.04  # Reduced penalty for movement
+        self.food_reward = 100  # Increased food reward significantly
+        self.iterations = 100  # Maximum number of value iterations
+        self.convergence_threshold = 0.01  # Stop when changes are below this
+        self.last_score = None
+        self.last_food_count = None
+
+    def print_state(self, state):
+        """Print the current state of the world for debugging"""
+        pacman_pos = api.whereAmI(state)
+        food = api.food(state)
+        
+        print "Current state:"
+        print "Pacman position:", pacman_pos
+        print "Food locations:", food
+        print "Grid representation (P=Pacman, F=Food, #=Wall, .=Empty):"
+        
+        for y in range(self.height-1, -1, -1):  # Print from top to bottom
+            for x in range(self.width):
+                if (x,y) == pacman_pos:
+                    print "P",
+                elif (x,y) in food:
+                    print "F",
+                elif self.utilities[x][y] is None:
+                    print "#",
+                else:
+                    print ".",
+            print
+            
+        print "Utility values:"
+        for y in range(self.height-1, -1, -1):
+            for x in range(self.width):
+                if self.utilities[x][y] is not None:
+                    print "%6.2f" % self.utilities[x][y],
+                else:
+                    print "   ###",
+            print
+
+    def registerInitialState(self, state):
+        """Initialize the agent with the game state"""
+        # Get grid dimensions from corners
+        corners = api.corners(state)
+        self.width = max(x for x, y in corners) + 1
+        self.height = max(y for x, y in corners) + 1
+        
+        # Initialize grids for utilities and rewards
+        self.utilities = self.create_grid(0.0)
+        self.rewards = self.create_grid(self.living_reward)
+        
+        # Mark walls
+        walls = api.walls(state)
+        for x, y in walls:
+            self.rewards[x][y] = None
+            self.utilities[x][y] = None
+            
+        # Set food rewards
+        food = api.food(state)
+        for x, y in food:
+            self.rewards[x][y] = self.food_reward
+        
+        self.last_food_count = len(food)
+        self.last_score = 0
+            
+        # Run value iteration
+        self.value_iteration()
+
+    def create_grid(self, initial_value):
+        """Create a width x height grid with initial_value"""
+        return [[initial_value for y in range(self.height)] 
+                for x in range(self.width)]
+
+    def value_iteration(self):
+        """Perform value iteration to compute utilities for all states"""
+        for _ in range(self.iterations):
+            # Create a new grid for updated utilities
+            new_utilities = self.create_grid(0.0)
+            max_change = 0.0
+            
+            # Update utilities for all states
+            for x in range(self.width):
+                for y in range(self.height):
+                    if self.rewards[x][y] is not None:  # Skip walls
+                        # Get maximum expected utility for this state
+                        utility = self.compute_state_utility(x, y)
+                        new_utilities[x][y] = utility
+                        
+                        # Track maximum change for convergence check
+                        change = abs(utility - self.utilities[x][y])
+                        max_change = max(max_change, change)
+            
+            # Update utilities
+            self.utilities = new_utilities
+            
+            # Check for convergence
+            if max_change < self.convergence_threshold:
+                break
+
+    def compute_state_utility(self, x, y):
+        """Compute utility for a state using the Bellman equation"""
+        if self.rewards[x][y] is None:  # Wall
+            return None
+            
+        # Get reward for current state
+        R = self.rewards[x][y]
+        
+        # If it's a terminal state (food), just return the reward
+        if R == self.food_reward:
+            return R
+            
+        # Get maximum expected utility over all actions
+        max_utility = float("-inf")
+        for action in [Directions.NORTH, Directions.SOUTH, 
+                      Directions.EAST, Directions.WEST]:
+            exp_utility = self.get_expected_utility(x, y, action)
+            max_utility = max(max_utility, exp_utility)
+            
+        # Return utility using Bellman equation
+        return R + self.discount * max_utility
+
+    def get_expected_utility(self, x, y, action):
+        """Compute expected utility of taking an action in state (x,y)"""
+        # Get successor states and their probabilities
+        successors = self.get_successor_states(x, y, action)
+        
+        # Compute expected utility
+        exp_utility = 0.0
+        for (next_x, next_y), prob in successors.items():
+            # Check if successor is valid (not a wall or out of bounds)
+            if (0 <= next_x < self.width and
+                0 <= next_y < self.height and
+                self.utilities[next_x][next_y] is not None):
+                exp_utility += prob * self.utilities[next_x][next_y]
+            else:
+                # If would hit wall or go out of bounds, stay in same place
+                exp_utility += prob * self.utilities[x][y]
+            
+        return exp_utility
+
+    def get_successor_states(self, x, y, action):
+        """Return dictionary of successor states and their probabilities"""
+        successors = {}
+        
+        # Get direction vectors for the action and perpendicular movements
+        if action == Directions.NORTH:
+            intended = (0, 1)
+            perpendicular = [(1, 0), (-1, 0)]
+        elif action == Directions.SOUTH:
+            intended = (0, -1)
+            perpendicular = [(1, 0), (-1, 0)]
+        elif action == Directions.EAST:
+            intended = (1, 0)
+            perpendicular = [(0, 1), (0, -1)]
+        elif action == Directions.WEST:
+            intended = (-1, 0)
+            perpendicular = [(0, 1), (0, -1)]
+            
+        # Add intended direction (0.8 probability)
+        next_x = x + intended[0]
+        next_y = y + intended[1]
+        successors[(next_x, next_y)] = 0.8
+        
+        # Add perpendicular directions (0.1 probability each)
+        for dx, dy in perpendicular:
+            next_x = x + dx
+            next_y = y + dy
+            successors[(next_x, next_y)] = 0.1
+            
+        return successors
 
     def getAction(self, state):
-        # Build or update the map
-        self.updateMap(state)
+        """Get the optimal action using maximum expected utility"""
+        # Update rewards based on current food locations
+        food = api.food(state)
+        current_score = state.getScore()
         
-        # Get legal actions
+        # Check if state has changed
+        if len(food) != self.last_food_count or current_score != self.last_score:
+            # Reset non-wall states to living reward
+            for x in range(self.width):
+                for y in range(self.height):
+                    if self.rewards[x][y] is not None:
+                        self.rewards[x][y] = self.living_reward
+                        
+            # Update food rewards
+            for x, y in food:
+                self.rewards[x][y] = self.food_reward
+                
+            # Rerun value iteration
+            self.value_iteration()
+            
+            self.last_food_count = len(food)
+            self.last_score = current_score
+        
+        # Print current state for debugging
+        self.print_state(state)
+        
+        # Get current position and legal actions
+        x, y = api.whereAmI(state)
         legal = api.legalActions(state)
         if Directions.STOP in legal:
             legal.remove(Directions.STOP)
-        
-        # Choose the action with maximum expected utility
-        return self.getMaxExpectedUtilityAction(state, legal)
-
-    def updateMap(self, state):
-        walls = api.walls(state)
-        food = api.food(state)
-        
-        for x in range(state.data.layout.width):
-            for y in range(state.data.layout.height):
-                if (x, y) not in walls:
-                    if (x, y) in food:
-                        self.map[(x, y)] = self.food_value
-                    else:
-                        self.map[(x, y)] = 0
-
-    def getMaxExpectedUtilityAction(self, state, legal):
-        pacman_pos = api.whereAmI(state)
+            
+        # Find action with maximum expected utility
+        max_utility = float("-inf")
         best_action = None
-        max_utility = float('-inf')
-
+        
         for action in legal:
-            utility = self.getExpectedUtility(pacman_pos, action)
-            if utility > max_utility:
-                max_utility = utility
+            exp_utility = self.get_expected_utility(x, y, action)
+            if exp_utility > max_utility:
+                max_utility = exp_utility
                 best_action = action
-
+                
+        # If no legal actions or all have same utility, choose random
+        if best_action is None:
+            best_action = random.choice(legal)
+            
         return api.makeMove(best_action, legal)
 
-    def getExpectedUtility(self, pos, action):
-        x, y = pos
-        dx, dy = Actions.directionToVector(action)
-        
-        # Calculate the positions for the intended move and its left/right alternatives
-        intended_pos = (int(x + dx), int(y + dy))
-        left_action = Directions.LEFT[action]
-        right_action = Directions.RIGHT[action]
-        left_pos = (int(x + Actions.directionToVector(left_action)[0]), 
-                    int(y + Actions.directionToVector(left_action)[1]))
-        right_pos = (int(x + Actions.directionToVector(right_action)[0]), 
-                     int(y + Actions.directionToVector(right_action)[1]))
-
-        # Calculate the expected utility
-        intended_value = self.map.get(intended_pos, 0)
-        left_value = self.map.get(left_pos, 0)
-        right_value = self.map.get(right_pos, 0)
-
-        expected_utility = (0.8 * intended_value) + (0.1 * left_value) + (0.1 * right_value)
-        return expected_utility
 
 def scoreEvaluation(state):
     return state.getScore()
