@@ -1,7 +1,7 @@
 # api.py
-# parsons/15-oct-2017
+# parsons/15-nov-2017
 #
-# Version 4.0
+# Version 5
 #
 # With acknowledgements to Jiaming Ke, who was the first to report the
 # bug in corners and to spot the bug in the motion model.
@@ -85,6 +85,37 @@ def ghosts(state):
     # uncertainty.
             
     return union(visible(state.getGhostPositions(),state), audible(state.getGhostPositions(),state))
+
+def ghostStates(state):
+    # Returns the position of the ghsosts, plus an indication of
+    # whether or not they are scared/edible.
+    #
+    # The information is returned as a list of elements of the form:
+    #
+    # ((x, y), state)
+    #
+    # where "state" is 1 if the relevant ghost is scared/edible, and 0
+    # otherwise.
+    
+    ghostStateInfo = state.getGhostStates()
+    ghostStates = []
+    for s in ghostStateInfo:
+        if s.scaredTimer > 0:
+            ghostStates.append((s.getPosition(), 1))
+        else:
+            ghostStates.append((s.getPosition(), 0))
+    return ghostStates
+
+def ghostStatesWithTimes(state):
+    # Just as ghostStates(), but when the ghost is in scared/edible
+    # mode, "state" is a time value (how much longer the ghost will
+    # remain scared/edible) rather than 1.
+    
+    ghostStateInfo = state.getGhostStates()
+    ghostStates = []
+    for s in ghostStateInfo:
+        ghostStates.append((s.getPosition(), s.scaredTimer))
+    return ghostStates
 
 def capsules(state):
     # Returns a list of (x, y) pairs of capsule positions.

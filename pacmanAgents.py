@@ -1,11 +1,9 @@
 # mdpAgents.py
 # parsons/20-nov-2017
 #
-# Version 1.0
+# Version 2.0
 #
-# A simple MDP-based agent that uses value iteration.
-#
-# Extends the basic Agent class from game.py
+# An MDP-based agent that handles ghosts using value iteration.
 
 from pacman import Directions
 from game import Agent
@@ -15,54 +13,36 @@ import game
 import util
 from copy import deepcopy
 
-class SimpleMDPAgent(Agent):
+class GhostMDPAgent(Agent):
     """
-    An agent that uses value iteration to compute optimal actions
+    An agent that uses value iteration to compute optimal actions,
+    now with ghost avoidance/chasing capabilities
     """
     def __init__(self):
+        # Grid representation
         self.grid = None
         self.utilities = None
         self.rewards = None
         self.width = None 
         self.height = None
-        self.discount = 0.9  # Increased discount to make agent more forward-looking
-        self.living_reward = -0.04  # Reduced penalty for movement
-        self.food_reward = 100  # Increased food reward significantly
-        self.iterations = 100  # Maximum number of value iterations
-        self.convergence_threshold = 0.01  # Stop when changes are below this
+        
+        # MDP parameters
+        self.discount = 0.9
+        self.living_reward = -0.04
+        self.food_reward = 100
+        self.iterations = 100
+        self.convergence_threshold = 0.01
+        
+        # Ghost-related parameters
+        self.ghost_reward = -500      # Large negative for ghost locations
+        self.ghost_near_reward = -100 # Smaller negative for adjacent squares  
+        self.ghost_scared_reward = 200 # Positive reward for scared ghosts
+        self.capsule_reward = 100     # Reward for power capsules
+        
+        # State tracking
         self.last_score = None
         self.last_food_count = None
-
-    def print_state(self, state):
-        """Print the current state of the world for debugging"""
-        pacman_pos = api.whereAmI(state)
-        food = api.food(state)
-        
-        print "Current state:"
-        print "Pacman position:", pacman_pos
-        print "Food locations:", food
-        print "Grid representation (P=Pacman, F=Food, #=Wall, .=Empty):"
-        
-        for y in range(self.height-1, -1, -1):  # Print from top to bottom
-            for x in range(self.width):
-                if (x,y) == pacman_pos:
-                    print "P",
-                elif (x,y) in food:
-                    print "F",
-                elif self.utilities[x][y] is None:
-                    print "#",
-                else:
-                    print ".",
-            print
-            
-        print "Utility values:"
-        for y in range(self.height-1, -1, -1):
-            for x in range(self.width):
-                if self.utilities[x][y] is not None:
-                    print "%6.2f" % self.utilities[x][y],
-                else:
-                    print "   ###",
-            print
+        self.last_ghost_states = None
 
     def registerInitialState(self, state):
         """Initialize the agent with the game state"""
@@ -85,11 +65,18 @@ class SimpleMDPAgent(Agent):
         food = api.food(state)
         for x, y in food:
             self.rewards[x][y] = self.food_reward
-        
+            
+        # Set capsule rewards
+        capsules = api.capsules(state)
+        for x, y in capsules:
+            self.rewards[x][y] = self.capsule_reward
+            
+        # Initialize ghost states
+        self.last_ghost_states = api.ghostStates(state)
         self.last_food_count = len(food)
         self.last_score = 0
             
-        # Run value iteration
+        # Run initial value iteration
         self.value_iteration()
 
     def create_grid(self, initial_value):
@@ -100,26 +87,19 @@ class SimpleMDPAgent(Agent):
     def value_iteration(self):
         """Perform value iteration to compute utilities for all states"""
         for _ in range(self.iterations):
-            # Create a new grid for updated utilities
             new_utilities = self.create_grid(0.0)
             max_change = 0.0
             
-            # Update utilities for all states
             for x in range(self.width):
                 for y in range(self.height):
-                    if self.rewards[x][y] is not None:  # Skip walls
-                        # Get maximum expected utility for this state
+                    if self.rewards[x][y] is not None:
                         utility = self.compute_state_utility(x, y)
                         new_utilities[x][y] = utility
-                        
-                        # Track maximum change for convergence check
                         change = abs(utility - self.utilities[x][y])
                         max_change = max(max_change, change)
             
-            # Update utilities
             self.utilities = new_utilities
             
-            # Check for convergence
             if max_change < self.convergence_threshold:
                 break
 
@@ -128,13 +108,8 @@ class SimpleMDPAgent(Agent):
         if self.rewards[x][y] is None:  # Wall
             return None
             
-        # Get reward for current state
         R = self.rewards[x][y]
         
-        # If it's a terminal state (food), just return the reward
-        if R == self.food_reward:
-            return R
-            
         # Get maximum expected utility over all actions
         max_utility = float("-inf")
         for action in [Directions.NORTH, Directions.SOUTH, 
@@ -142,18 +117,15 @@ class SimpleMDPAgent(Agent):
             exp_utility = self.get_expected_utility(x, y, action)
             max_utility = max(max_utility, exp_utility)
             
-        # Return utility using Bellman equation
         return R + self.discount * max_utility
 
     def get_expected_utility(self, x, y, action):
         """Compute expected utility of taking an action in state (x,y)"""
-        # Get successor states and their probabilities
         successors = self.get_successor_states(x, y, action)
         
-        # Compute expected utility
         exp_utility = 0.0
         for (next_x, next_y), prob in successors.items():
-            # Check if successor is valid (not a wall or out of bounds)
+            # Check if successor is valid
             if (0 <= next_x < self.width and
                 0 <= next_y < self.height and
                 self.utilities[next_x][next_y] is not None):
@@ -168,7 +140,7 @@ class SimpleMDPAgent(Agent):
         """Return dictionary of successor states and their probabilities"""
         successors = {}
         
-        # Get direction vectors for the action and perpendicular movements
+        # Get direction vectors
         if action == Directions.NORTH:
             intended = (0, 1)
             perpendicular = [(1, 0), (-1, 0)]
@@ -195,32 +167,76 @@ class SimpleMDPAgent(Agent):
             
         return successors
 
+    def add_adjacent_rewards(self, x, y, reward):
+        """Add rewards to squares adjacent to (x,y)"""
+        adjacents = [(x+1, y), (x-1, y), (x, y+1), (x, y-1)]
+        for adj_x, adj_y in adjacents:
+            if (0 <= adj_x < self.width and 
+                0 <= adj_y < self.height and 
+                self.rewards[adj_x][adj_y] is not None):
+                # Only update if it would make the reward more extreme
+                if reward < 0:
+                    self.rewards[adj_x][adj_y] = min(
+                        self.rewards[adj_x][adj_y], 
+                        reward
+                    )
+                else:
+                    self.rewards[adj_x][adj_y] = max(
+                        self.rewards[adj_x][adj_y], 
+                        reward
+                    )
+
     def getAction(self, state):
         """Get the optimal action using maximum expected utility"""
-        # Update rewards based on current food locations
+        # Get current state information
+        ghost_states = api.ghostStates(state)
         food = api.food(state)
+        capsules = api.capsules(state)
         current_score = state.getScore()
         
         # Check if state has changed
-        if len(food) != self.last_food_count or current_score != self.last_score:
+        state_changed = (len(food) != self.last_food_count or 
+                        current_score != self.last_score or
+                        ghost_states != self.last_ghost_states)
+                        
+        if state_changed:
             # Reset non-wall states to living reward
             for x in range(self.width):
                 for y in range(self.height):
                     if self.rewards[x][y] is not None:
                         self.rewards[x][y] = self.living_reward
-                        
+            
             # Update food rewards
             for x, y in food:
                 self.rewards[x][y] = self.food_reward
                 
+            # Update capsule rewards
+            for x, y in capsules:
+                self.rewards[x][y] = self.capsule_reward
+                
+            # Update ghost rewards based on state
+            for (ghost_x, ghost_y), scared in ghost_states:
+                ghost_x = int(ghost_x)
+                ghost_y = int(ghost_y)
+                
+                if scared:
+                    # If ghost is scared, it's a positive reward
+                    self.rewards[ghost_x][ghost_y] = self.ghost_scared_reward
+                    # Make adjacent squares slightly positive
+                    self.add_adjacent_rewards(ghost_x, ghost_y, self.ghost_scared_reward * 0.5)
+                else:
+                    # If ghost is dangerous, it's a negative reward
+                    self.rewards[ghost_x][ghost_y] = self.ghost_reward
+                    # Make adjacent squares negative but less so
+                    self.add_adjacent_rewards(ghost_x, ghost_y, self.ghost_near_reward)
+            
             # Rerun value iteration
             self.value_iteration()
             
+            # Update tracking variables
             self.last_food_count = len(food)
             self.last_score = current_score
-        
-        # Print current state for debugging
-        self.print_state(state)
+            self.last_ghost_states = ghost_states
         
         # Get current position and legal actions
         x, y = api.whereAmI(state)
@@ -243,7 +259,6 @@ class SimpleMDPAgent(Agent):
             best_action = random.choice(legal)
             
         return api.makeMove(best_action, legal)
-
 
 def scoreEvaluation(state):
     return state.getScore()
